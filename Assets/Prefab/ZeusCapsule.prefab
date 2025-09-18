@@ -16,6 +16,7 @@ GameObject:
   - component: {fileID: 1104647383884429585}
   - component: {fileID: 1704285072008543388}
   - component: {fileID: 7322466764686191466}
+  - component: {fileID: -4833540260100104856}
   m_Layer: 0
   m_Name: ZeusCapsule
   m_TagString: Untagged
@@ -120,7 +121,7 @@ NavMeshAgent:
   m_PrefabInstance: {fileID: 0}
   m_PrefabAsset: {fileID: 0}
   m_GameObject: {fileID: 5465664554682432797}
-  m_Enabled: 1
+  m_Enabled: 0
   m_AgentTypeID: 0
   m_Radius: 0.5
   m_Speed: 3.5
@@ -194,3 +195,37 @@ MonoBehaviour:
   maxHealth: 300
   currentHealth: 0
   bossBar: {fileID: 0}
+--- !u!114 &-4833540260100104856
+MonoBehaviour:
+  m_ObjectHideFlags: 0
+  m_CorrespondingSourceObject: {fileID: 0}
+  m_PrefabInstance: {fileID: 0}
+  m_PrefabAsset: {fileID: 0}
+  m_GameObject: {fileID: 5465664554682432797}
+  m_Enabled: 1
+  m_EditorHideFlags: 0
+  m_Script: {fileID: 11500000, guid: 1ed28474da338ac4794cf1fb32736a6f, type: 3}
+  m_Name: 
+  m_EditorClassIdentifier: 
+  maxHealth: 500
+  attackPause: 1
+  facePlayer: 1
+  turnSpeed: 6
+  shotOrigin: {fileID: 0}
+  smallBoltPrefab: {fileID: 1884621012074449793, guid: b4339d327671e794eab7e3dfb0fb06f0, type: 3}
+  bigBoltPrefab: {fileID: 7647348601412511704, guid: cf26d9b53e265b149b03b600dae5ac90, type: 3}
+  rotatingWallPrefab: {fileID: 932467128415083389, guid: 0577abeb51b022840b6669dd7b8a3f6e, type: 3}
+  weightBasic: 10
+  weightThrow: 4
+  weightWall: 2
+  basicWindup: 0.15
+  smallBoltSpeed: 18
+  smallBoltDamage: 12
+  throwWindup: 0.3
+  bigBoltSpeed: 12
+  bigBoltDamage: 28
+  bigScale: 1.5
+  slamWindup: 0.35
+  wallDuration: 5
+  wallAngularSpeed: 70
+  wallTouchDamage: 18

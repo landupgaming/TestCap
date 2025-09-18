@@ -21,6 +21,14 @@ public class DungeonGenerator : MonoBehaviour
     public Vector2 cellSize = new Vector2(30f, 30f);
     [Range(0.90f, 1f)] public float boundsShrink = 0.98f;
 
+    [Header("Player Teleport")]
+    [Tooltip("Which tag to teleport to the start room after generation.")]
+    public string playerTag = "Player";
+    [Tooltip("Layers considered 'ground' when finding a safe Y.")]
+    public LayerMask groundMask = ~0;
+    [Tooltip("Vertical offset so the player doesn't clip into the floor.")]
+    public float playerYOffset = 0.5f;
+
     [Header("Debug")]
     public bool debugLogs = false;
     public bool debugDrawOverlap = false;
@@ -92,6 +100,9 @@ public class DungeonGenerator : MonoBehaviour
 
         var bossSel = Object.FindFirstObjectByType<BossRoomSelector>(FindObjectsInactive.Include);
         bossSel?.PickBossRoom();
+
+        // Teleport anything with the player tag to the start room center (safe floor Y + offset)
+        TeleportPlayersToStart(start);
     }
 
     void GenerateBranch(Doorway origin, Direction branchDir, int length, Transform parent, ref int totalRooms)
@@ -268,5 +279,47 @@ public class DungeonGenerator : MonoBehaviour
         Debug.DrawLine(p[1], p[5], color, duration);
         Debug.DrawLine(p[2], p[6], color, duration);
         Debug.DrawLine(p[3], p[7], color, duration);
+    }
+
+    // ----------------------------------------------------------------------
+    // Player teleport to start room
+    // ----------------------------------------------------------------------
+    void TeleportPlayersToStart(Room startRoom)
+    {
+        // Center of the room's footprint (XZ)
+        Bounds b = startRoom.GetFootprintBounds();
+        Vector3 pos = b.center;
+
+        // Find floor Y by raycasting down from above
+        Vector3 probe = pos + Vector3.up * 10f;
+        if (Physics.Raycast(probe, Vector3.down, out var hit, 50f, groundMask, QueryTriggerInteraction.Ignore))
+            pos = hit.point;
+
+        pos += Vector3.up * playerYOffset;
+
+        // Teleport all objects with the tag
+        GameObject[] players;
+        try
+        {
+            players = GameObject.FindGameObjectsWithTag(playerTag);
+        }
+        catch
+        {
+            // Tag not defined — nothing to do
+            if (debugLogs) Debug.LogWarning($"[DG] Tag '{playerTag}' not defined; no players teleported.");
+            return;
+        }
+
+        foreach (var go in players)
+        {
+            if (!go) continue;
+
+            // If they have a NavMeshAgent and you want to avoid "not on navmesh" spam,
+            // you could Warp() here. For your project you're using Rigidbody movement,
+            // so a simple transform move is fine.
+            go.transform.position = pos;
+        }
+
+        if (debugLogs) Debug.Log($"[DG] Teleported {players.Length} object(s) tagged '{playerTag}' to start room at {pos}.");
     }
 }

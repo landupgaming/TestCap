@@ -1,232 +1,138 @@
 using UnityEngine;
 
 [RequireComponent(typeof(Collider))]
-[RequireComponent(typeof(Rigidbody))]
 public class Projectile : MonoBehaviour
 {
-    [Header("Motion")]
-    public float speed = 28f;
-    public float lifetime = 4f;
-    public bool useRaycastSweep = true;
+    [Header("Kinetics")]
+    public float speed = 20f;
+    public float lifeTime = 5f;
 
     [Header("Damage")]
-    public float damage = 15f;                 // <-- ADDED: used when applying damage
+    public int damage = 10;
 
-    [Header("Damage Targets")]
-    public bool damageEnemies = true;
-    public bool damagePlayer = false;
-    [Tooltip("Layers this projectile can detect for sweeping/triggers (keep broad; logic below filters actual hits).")]
-    public LayerMask hitMask = ~0;
+    [Header("AOE (0 = none)")]
+    public float explosionRadius = 0f;
+    public GameObject impactEffect;
 
-    [Header("Collision Behavior")]
-    [Tooltip("If false (default), environment hits are ignored (projectile won't pop on walls).")]
-    public bool collideWithEnvironment = false;
-    [Tooltip("If true, the projectile only destroys when it actually dealt damage.")]
-    public bool destroyOnlyOnDamage = true;
-    [Tooltip("If true, destroy on any valid hit (after filters). Ignored if destroyOnlyOnDamage is true.")]
-    public bool destroyOnHit = true;
+    [Header("Ownership / Safety")]
+    [Tooltip("Set by the shooter so we can ignore collisions with the owner.")]
+    public GameObject owner;
+    [Tooltip("Ignore world/static hits for this long after spawn to avoid instant pops.")]
+    public float graceTimeWorldHit = 0.05f;
 
-    // cached
-    Rigidbody rb;
-    Collider col;
-    Vector3 lastPos;
-    float t;
-
-    // owner data
-    GameObject ownerGO;
-    string ownerTag;
-
-    // ======================
-    //   PUBLIC INITIALIZE
-    // ======================
-
-    /// Preferred overload: pass owner GameObject so we can ignore its colliders.
-    public void Initialize(Vector3 direction, GameObject owner)
-    {
-        ownerGO = owner;
-        ownerTag = owner ? owner.tag : null;
-        CommonInit(direction);
-        IgnoreOwnerColliders();
-    }
-
-    /// Back-compat overload: older code passed only a tag.
-    public void Initialize(Vector3 direction, string ownerTag)
-    {
-        ownerGO = null;
-        this.ownerTag = ownerTag;
-        CommonInit(direction);
-        // can't ignore owner colliders without GO; tag checks still prevent damage
-    }
-
-    /// Back-compat overload: older code passed only a direction.
-    public void Initialize(Vector3 direction)
-    {
-        ownerGO = null;
-        ownerTag = null;
-        CommonInit(direction);
-    }
-
-    // ======================
-    //   LIFECYCLE
-    // ======================
+    Vector3 dir = Vector3.forward;
+    float born;
 
     void Awake()
     {
-        rb = GetComponent<Rigidbody>();
-        col = GetComponent<Collider>();
+        var col = GetComponent<Collider>();
+        col.isTrigger = true;
     }
 
     void OnEnable()
     {
-        lastPos = transform.position;
-        if (rb != null && rb.velocity.sqrMagnitude < 0.01f)
-            rb.velocity = transform.forward * speed;
+        born = Time.time;
+        CancelInvoke();
+        Invoke(nameof(SelfDestruct), lifeTime);
+    }
+
+    public void Initialize(Vector3 direction, GameObject ownerObj = null)
+    {
+        dir = direction.sqrMagnitude > 0.0001f ? direction.normalized : transform.forward;
+        owner = ownerObj;
+
+        // Ignore owner’s colliders if we know them
+        if (owner)
+        {
+            var myCol = GetComponent<Collider>();
+            if (myCol)
+            {
+                foreach (var c in owner.GetComponentsInChildren<Collider>())
+                    if (c && c.enabled) Physics.IgnoreCollision(myCol, c, true);
+            }
+        }
     }
 
     void Update()
     {
-        t += Time.deltaTime;
-        if (t >= lifetime) { Destroy(gameObject); return; }
-
-        if (useRaycastSweep && rb != null && col != null)
-        {
-            Vector3 curPos = transform.position;
-            Vector3 delta = curPos - lastPos;
-            float dist = delta.magnitude;
-
-            if (dist > 0.0001f)
-            {
-                float radius = 0.1f;
-                if (col is SphereCollider sc) radius = sc.radius * MaxScale(transform);
-                else if (col is CapsuleCollider cc) radius = Mathf.Max(cc.radius * MaxScale(transform), 0.1f);
-
-                if (Physics.SphereCast(lastPos, radius, delta.normalized,
-                                        out RaycastHit hit, dist, hitMask,
-                                        QueryTriggerInteraction.Ignore))
-                {
-                    if (ShouldProcessCollider(hit.collider))
-                    {
-                        HandleHit(hit.collider, hit.point, hit.normal);
-                    }
-                }
-            }
-
-            lastPos = curPos;
-        }
+        transform.position += dir * (speed * Time.deltaTime);
     }
-
-    // ======================
-    //   COLLISION HANDLERS
-    // ======================
 
     void OnTriggerEnter(Collider other)
     {
-        if (((1 << other.gameObject.layer) & hitMask) == 0) return;
-        if (!ShouldProcessCollider(other)) return;
+        if (!other) return;
 
-        Vector3 point = other.ClosestPoint(transform.position);
-        Vector3 normal = (transform.position - point).sqrMagnitude > 0.0001f
-            ? (transform.position - point).normalized
-            : -transform.forward;
+        // Ignore collisions with the owner (self-fire)
+        if (owner && other.transform.IsChildOf(owner.transform)) return;
 
-        HandleHit(other, point, normal);
-    }
+        bool dealt = false;
 
-    bool ShouldProcessCollider(Collider c)
-    {
-        if (!c) return false;
-
-        // Skip owner via GO or tag
-        if (ownerGO && (c.transform == ownerGO.transform || c.GetComponentInParent<Transform>() == ownerGO.transform))
-            return false;
-        if (!string.IsNullOrEmpty(ownerTag) && c.CompareTag(ownerTag))
-            return false;
-
-        // Filter by tag: only care about Player/Enemy unless collideWithEnvironment is true
-        bool isPlayer = c.CompareTag("Player") || (c.attachedRigidbody && c.attachedRigidbody.gameObject.CompareTag("Player"));
-        bool isEnemy = c.CompareTag("Enemy") || (c.attachedRigidbody && c.attachedRigidbody.gameObject.CompareTag("Enemy"));
-
-        if (!isPlayer && !isEnemy && !collideWithEnvironment)
-            return false; // ignore walls, room triggers, etc.
-
-        return true;
-    }
-
-    void HandleHit(Collider other, Vector3 hitPoint, Vector3 hitNormal)
-    {
-        bool isPlayer = other.CompareTag("Player") || (other.attachedRigidbody && other.attachedRigidbody.gameObject.CompareTag("Player"));
-        bool isEnemy = other.CompareTag("Enemy") || (other.attachedRigidbody && other.attachedRigidbody.gameObject.CompareTag("Enemy"));
-
-        bool didDamage = false;
-
-        if (isEnemy && damageEnemies)
+        // Player?
+        var ph = other.GetComponentInParent<PlayerHealth>();
+        if (ph)
         {
-            var enemyHealth = other.GetComponentInParent<EnemyHealth>();
-            if (enemyHealth != null)
+            ph.TakeDamage(damage);
+            dealt = true;
+        }
+
+        // Generic enemy?
+        if (!dealt)
+        {
+            var eh = other.GetComponentInParent<EnemyHealth>();
+            if (eh)
             {
-                enemyHealth.TakeDamage((int)damage);
-                didDamage = true;
+                eh.TakeDamage(damage);
+                dealt = true;
             }
         }
-        else if (isPlayer && damagePlayer)
+
+        // Zeus boss?
+        if (!dealt)
         {
-            var playerHealth = other.GetComponentInParent<PlayerHealth>();
-            if (playerHealth != null)
+            var zeus = other.GetComponentInParent<ZeusBossController>();
+            if (zeus)
             {
-                playerHealth.TakeDamage((int)damage);
-                didDamage = true;
+                zeus.TakeDamage(damage);
+                dealt = true;
             }
         }
-        else
+
+        // World/static geometry (after grace)
+        if (!dealt)
         {
-            // Environment or other object (only gets here if collideWithEnvironment == true)
+            bool isWorld = other.gameObject.isStatic || other.attachedRigidbody == null;
+            if (isWorld && (Time.time - born) >= graceTimeWorldHit)
+                dealt = true;
         }
 
-        if (destroyOnlyOnDamage)
+        if (dealt)
         {
-            if (didDamage) Destroy(gameObject);
-        }
-        else if (destroyOnHit)
-        {
-            Destroy(gameObject);
-        }
-    }
+            if (explosionRadius > 0f)
+            {
+                Collider[] hits = Physics.OverlapSphere(transform.position, explosionRadius, ~0, QueryTriggerInteraction.Ignore);
+                foreach (var h in hits)
+                {
+                    if (owner && h.transform.IsChildOf(owner.transform)) continue;
 
-    // ======================
-    //   INTERNAL HELPERS
-    // ======================
+                    var eh2 = h.GetComponentInParent<EnemyHealth>();
+                    if (eh2) eh2.TakeDamage(damage);
 
-    void CommonInit(Vector3 direction)
-    {
-        if (rb == null) rb = GetComponent<Rigidbody>();
-        if (col == null) col = GetComponent<Collider>();
+                    var z2 = h.GetComponentInParent<ZeusBossController>();
+                    if (z2) z2.TakeDamage(damage);
 
-        col.isTrigger = true;
+                    var ph2 = h.GetComponentInParent<PlayerHealth>();
+                    if (ph2) ph2.TakeDamage(damage);
+                }
+            }
 
-        rb.useGravity = false;
-        rb.isKinematic = false;
-        rb.collisionDetectionMode = CollisionDetectionMode.ContinuousDynamic;
-
-        transform.rotation = Quaternion.LookRotation(direction.normalized, Vector3.up);
-        rb.velocity = direction.normalized * speed;
-
-        lastPos = transform.position;
-        t = 0f;
-    }
-
-    void IgnoreOwnerColliders()
-    {
-        if (!ownerGO || !col) return;
-        var ownerColliders = ownerGO.GetComponentsInChildren<Collider>(includeInactive: true);
-        foreach (var oc in ownerColliders)
-        {
-            if (oc && oc != col) Physics.IgnoreCollision(col, oc, true);
+            if (impactEffect) Instantiate(impactEffect, transform.position, Quaternion.identity);
+            SelfDestruct();
         }
     }
 
-    static float MaxScale(Transform t)
+    void SelfDestruct()
     {
-        var s = t.lossyScale;
-        return Mathf.Max(s.x, Mathf.Max(s.y, s.z));
+        CancelInvoke();
+        Destroy(gameObject);
     }
 }

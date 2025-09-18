@@ -132,18 +132,14 @@ public class DebugBossTools : MonoBehaviour
     {
         if (bossRoomRoot && bossRoomRoot.gameObject.activeInHierarchy) return bossRoomRoot;
 
-        // 1) Strong types
+        // 1) Prefer strong types (works even if objects are inactive)
         var marker = FindFirst<BossRoomMarker>(includeInactive: true);
         if (marker) return marker.transform;
 
         var controller = FindFirst<BossRoomController>(includeInactive: true);
         if (controller) return controller.transform;
 
-        // 2) Tag
-        var tagged = GameObject.FindGameObjectWithTag("BossRoom");
-        if (tagged) return tagged.transform;
-
-        // 3) Name heuristic
+        // 2) Name heuristic (no tag dependency)
         var all = FindAll<Transform>(includeInactive: true);
         var guess = all.FirstOrDefault(t =>
             t && t.name.ToLower().Contains("boss") && t.name.ToLower().Contains("room"));
@@ -213,10 +209,6 @@ public class DebugBossTools : MonoBehaviour
 
     static T FindFirst<T>(bool includeInactive) where T : Object
     {
-        // Newer Unity (2023+) prefers enum overloads:
-        //   FindFirstObjectByType<T>(FindObjectsInactive)
-        // Older Unity has:
-        //   FindObjectOfType<T>(bool includeInactive)
 #if UNITY_2023_1_OR_NEWER
         return Object.FindFirstObjectByType<T>(includeInactive ? FindObjectsInactive.Include : FindObjectsInactive.Exclude);
 #else
