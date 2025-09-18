@@ -1,0 +1,36 @@
+# Unity
+[Ll]ibrary/
+[Tt]emp/
+[Oo]bj/
+[Bb]uild*/
+[Ll]ogs/
+UserSettings/
+MemoryCaptures/
+
+# IDE
+.vscode/
+.idea/
+.Rider/
+
+# Solutions/CSProj
+*.sln
+*.csproj
+*.pidb
+*.suo
+*.user
+*.userprefs
+*.unityproj
+*.tmp
+*.booproj
+*.svd
+*.pdb
+*.mdb
+*.opendb
+*.VC.db
+
+# Crash/backup
+sysinfo.txt
+*.stackdump
+
+# Addressables
+/Assets/AddressableAssetsData/*/*.bin*
