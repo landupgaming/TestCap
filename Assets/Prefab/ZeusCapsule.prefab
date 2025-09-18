@@ -220,12 +220,19 @@ MonoBehaviour:
   weightWall: 2
   basicWindup: 0.15
   smallBoltSpeed: 18
-  smallBoltDamage: 12
+  smallBoltDamage: 5
+  smallForward: 0.7
+  smallUp: 0.2
   throwWindup: 0.3
   bigBoltSpeed: 12
-  bigBoltDamage: 28
+  bigBoltDamage: 10
   bigScale: 1.5
+  bigForward: 1
+  bigUp: 0.35
   slamWindup: 0.35
   wallDuration: 5
   wallAngularSpeed: 70
-  wallTouchDamage: 18
+  wallTouchDamage: 5
+  groundMask:
+    serializedVersion: 2
+    m_Bits: 4294967295

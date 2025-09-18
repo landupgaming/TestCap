@@ -4,87 +4,74 @@ using UnityEngine.AI;
 public class PlayerController : MonoBehaviour
 {
     [Header("Movement")]
-    public float moveSpeed = 6f;     // adjustable move speed
+    public float moveSpeed = 6f;
 
     [Header("Aiming (GROUND RAY)")]
-    [Tooltip("Camera used for cursor raycasts. If left empty, falls back to Camera.main.")]
     [SerializeField] private Camera aimCamera;
     public bool aimWithMouse = true;
-    [Tooltip("Set this to your Ground layer.")]
     public LayerMask groundRayMask;
-    [Tooltip("Project the hit point onto the NavMesh (optional but stable).")]
     public bool projectAimToNavMesh = true;
     public float navSampleRadius = 2f;
-    [Tooltip("How quickly the player rotates to face the cursor.")]
     public float rotateSpeed = 18f;
     public bool faceAimDirection = true;
 
     [Header("Shooting (RMB)")]
-    public Transform firePoint;                  // assign in Inspector
-    public GameObject kiBlastPrefab;             // needs Collider(Trigger)+Rigidbody (+Projectile preferred)
+    public Transform firePoint;
+    public GameObject kiBlastPrefab;
     public float kiBlastCooldown = 0.15f;
-    [Tooltip("Right mouse to shoot (if false, uses Fire1).")]
     public bool fireWithRightMouse = true;
     [Tooltip("Forward offset so the projectile doesn't start inside the player collider.")]
     public float spawnForwardOffset = 0.3f;
 
+    [Tooltip("Vertical spawn offset in world units (+ is up).")]
+    public float spawnHeightOffset = 0.6f;
+
     [Header("Melee (LMB)")]
-    [Tooltip("Time between melee attacks.")]
     public float meleeCooldown = 0.35f;
-    [Tooltip("How far the melee can reach in world units.")]
     public float meleeRange = 2.2f;
-    [Tooltip("Half-angle of the attack cone (degrees).")]
     public float meleeHalfAngle = 50f;
-    [Tooltip("Vertical offset of the check from player pivot.")]
     public float meleeHeightOffset = 0.6f;
-    [Tooltip("Damage dealt to enemies hit by the melee.")]
     public int meleeDamage = 20;
-    [Tooltip("Knockback applied to rigidbodies hit by the melee.")]
     public float meleeKnockback = 7f;
-    [Tooltip("Layers the melee can hit (put enemies here).")]
     public LayerMask meleeHitMask = ~0;
-    [Tooltip("Optional VFX prefab to spawn at swing start (destroyed automatically).")]
     public GameObject meleeSwingVFX;
-    [Tooltip("How long to keep the swing VFX alive.")]
     public float meleeVFXLife = 0.35f;
 
     [Header("Dash (Space)")]
-    [Tooltip("How far the dash should travel total (world units).")]
     public float dashDistance = 5f;
-    [Tooltip("How long the dash lasts in seconds.")]
     public float dashDuration = 0.18f;
-    [Tooltip("Cooldown between dashes in seconds.")]
     public float dashCooldown = 0.5f;
-    [Tooltip("If true, player becomes invulnerable while dashing.")]
     public bool iFramesDuringDash = true;
-    [Tooltip("Extra invulnerability AFTER the dash ends (seconds).")]
     public float iFrameAfterDash = 0.05f;
-    [Tooltip("Leave empty to auto-collect ALL colliders under the player. Otherwise, specify only your hurtbox colliders.")]
     public Collider[] collidersToDisableForIFrames;
+
+    [Header("I-Frames Handling")]
+    [Tooltip("If ON, i-frames will temporarily disable NON-trigger colliders. Leave OFF to avoid losing damage hits.")]
+    public bool disableCollidersForIFrames = false;
 
     [Header("Stun")]
     public bool debugStunLogs = false;
     public float stunImmunityAfterStun = 0.35f;
 
+    // --- Public stun state (for enemies to query) ---
+    public bool IsStunImmune => Time.time < stunRecoverImmunityUntil;
+    public bool IsStunned => isStunned;
+
     // cached
     Rigidbody rb;
-    PlayerHealth playerHealth; // to optionally poke invuln, if you want on dash, etc.
-    float lastShotTime;
-    float lastMeleeTime;
+    PlayerHealth playerHealth;
+    float lastShotTime, lastMeleeTime;
 
     // stun state
     bool isStunned;
-    float stunTimer;
-    float stunRecoverImmunityUntil;
+    float stunTimer, stunRecoverImmunityUntil;
 
     // dash state
     bool isDashing;
-    float dashTimer;
-    float nextDashAllowedTime;
+    float dashTimer, nextDashAllowedTime, dashSpeed;
     Vector3 dashDir;
-    float dashSpeed;  // computed from distance/duration
     bool iFramesActive;
-    Collider[] cachedAllColliders;  // auto-populated if user left list empty
+    Collider[] cachedAllColliders;
 
     Camera Cam => aimCamera != null ? aimCamera : Camera.main;
 
@@ -101,17 +88,19 @@ public class PlayerController : MonoBehaviour
         if (Cam == null && aimWithMouse)
             Debug.LogWarning("[PlayerController] No Aim Camera set and no Camera.main found. Assign one in the Inspector.");
 
-        // Auto-collect colliders if user didn't specify
+        // Cache colliders if list not provided
         if (collidersToDisableForIFrames == null || collidersToDisableForIFrames.Length == 0)
-        {
             cachedAllColliders = GetComponentsInChildren<Collider>(includeInactive: true);
-        }
+
+        // Safety: start with all NON-trigger colliders enabled
+        EnableAllNonTriggerColliders(true);
+
         dashSpeed = (dashDuration > 0f) ? (dashDistance / dashDuration) : 0f;
     }
 
     void Update()
     {
-        // Stun gate
+        // Stun gate + recovery -> immunity window
         if (isStunned)
         {
             stunTimer -= Time.deltaTime;
@@ -119,34 +108,29 @@ public class PlayerController : MonoBehaviour
             {
                 isStunned = false;
                 stunRecoverImmunityUntil = Time.time + stunImmunityAfterStun;
-                if (debugStunLogs) Debug.Log("[Player] Recovered from stun.");
+                if (debugStunLogs) Debug.Log("[Player] Recovered from stun → immunity started.");
             }
             return;
         }
 
-        // Handle dash input before movement so dash overrides velocity
-        if (Input.GetKeyDown(KeyCode.Space))
-            TryStartDash();
+        if (Input.GetKeyDown(KeyCode.Space)) TryStartDash();
 
         if (isDashing)
         {
             DashUpdate();
-            // Rotate toward cursor while dashing
             Vector3 aimDir = GetAimDirectionFromGroundRay();
             if (faceAimDirection && aimDir.sqrMagnitude > 0.0001f)
             {
                 Quaternion targetRot = Quaternion.LookRotation(aimDir, Vector3.up);
                 transform.rotation = Quaternion.Slerp(transform.rotation, targetRot, rotateSpeed * Time.deltaTime);
             }
-            // allow attacks during dash if you want
             HandleShootWhileAiming();
             HandleMeleeWhileAiming();
-            return; // skip normal movement while dashing
+            return;
         }
 
         HandleMovement();
 
-        // Aim every frame (ground ray)
         Vector3 aimDir2 = GetAimDirectionFromGroundRay();
         if (faceAimDirection && aimDir2.sqrMagnitude > 0.0001f)
         {
@@ -154,9 +138,8 @@ public class PlayerController : MonoBehaviour
             transform.rotation = Quaternion.Slerp(transform.rotation, targetRot, rotateSpeed * Time.deltaTime);
         }
 
-        // LMB melee, RMB shoot
-        HandleMelee(aimDir2);   // Left mouse
-        HandleShoot(aimDir2);   // Right mouse (or Fire1 if you flip the toggle)
+        HandleMelee(aimDir2);
+        HandleShoot(aimDir2);
     }
 
     void HandleMovement()
@@ -174,7 +157,6 @@ public class PlayerController : MonoBehaviour
     {
         if (Time.time < nextDashAllowedTime || isDashing) return;
 
-        // Dash direction = where we’re facing; if you prefer input-based, replace with input vector
         Vector3 d = transform.forward;
         if (d.sqrMagnitude < 0.0001f) d = Vector3.forward;
         d.y = 0f;
@@ -185,10 +167,7 @@ public class PlayerController : MonoBehaviour
         dashDir = d;
         dashSpeed = (dashDuration > 0f) ? (dashDistance / dashDuration) : 0f;
 
-        if (iFramesDuringDash)
-            SetIFrames(true);
-
-        // Prevent immediate re-dash
+        if (iFramesDuringDash) SetIFrames(true);
         nextDashAllowedTime = Time.time + dashCooldown;
     }
 
@@ -196,36 +175,25 @@ public class PlayerController : MonoBehaviour
     {
         dashTimer -= Time.deltaTime;
 
-        // Override horizontal velocity with dash speed; preserve Y
         if (rb)
-        {
             rb.velocity = new Vector3(dashDir.x * dashSpeed, rb.velocity.y, dashDir.z * dashSpeed);
-        }
         else
-        {
             transform.position += dashDir * dashSpeed * Time.deltaTime;
-        }
 
         if (dashTimer <= 0f)
         {
             isDashing = false;
-
-            // Small grace i-frame after dash end
             if (iFramesDuringDash)
             {
-                if (iFrameAfterDash > 0f)
-                    Invoke(nameof(EndIFrames), iFrameAfterDash);
-                else
-                    SetIFrames(false);
+                if (iFrameAfterDash > 0f) Invoke(nameof(EndIFrames), iFrameAfterDash);
+                else SetIFrames(false);
             }
         }
     }
 
-    void SetIFrames(bool enabled)
+    // === I-Frames / Collider helpers ===
+    void EnableAllNonTriggerColliders(bool enabled)
     {
-        iFramesActive = enabled;
-
-        // If user provided a list, use that; else use auto-collected colliders
         var list = (collidersToDisableForIFrames != null && collidersToDisableForIFrames.Length > 0)
             ? collidersToDisableForIFrames
             : cachedAllColliders;
@@ -235,31 +203,37 @@ public class PlayerController : MonoBehaviour
         for (int i = 0; i < list.Length; i++)
         {
             var c = list[i];
-            if (!c || c.isTrigger) continue; // keep triggers if they drive UI or events
-            c.enabled = !enabled;
+            if (!c || c.isTrigger) continue;
+            c.enabled = enabled;
         }
+    }
+
+    void SetIFrames(bool enabled)
+    {
+        iFramesActive = enabled;
+        // By default, do NOT disable colliders (prevents "no damage" bugs).
+        if (disableCollidersForIFrames)
+            EnableAllNonTriggerColliders(!enabled);
     }
 
     void EndIFrames()
     {
         if (iFramesActive) SetIFrames(false);
+        EnableAllNonTriggerColliders(true); // safety
     }
+    // ================================
 
     // --- Aiming: ground ray using chosen camera ---
     Vector3 GetAimDirectionFromGroundRay()
     {
         var cam = Cam;
-        if (!aimWithMouse || cam == null)
-            return transform.forward;
+        if (!aimWithMouse || cam == null) return transform.forward;
 
         Ray ray = cam.ScreenPointToRay(Input.mousePosition);
 
-        // First: physics hit on your Ground layer
         if (Physics.Raycast(ray, out RaycastHit hit, 500f, groundRayMask, QueryTriggerInteraction.Ignore))
         {
             Vector3 point = hit.point;
-
-            // Optional: project to nearest NavMesh point for stability
             if (projectAimToNavMesh && NavMesh.SamplePosition(point, out var navHit, navSampleRadius, NavMesh.AllAreas))
                 point = navHit.position;
 
@@ -268,7 +242,6 @@ public class PlayerController : MonoBehaviour
             if (dir.sqrMagnitude > 0.0001f) return dir.normalized;
         }
 
-        // Fallback: flat plane at player Y if Ground ray missed
         Plane p = new Plane(Vector3.up, new Vector3(0f, transform.position.y, 0f));
         if (p.Raycast(ray, out float enter))
         {
@@ -298,23 +271,21 @@ public class PlayerController : MonoBehaviour
         if (Time.time - lastShotTime < kiBlastCooldown) return;
         lastShotTime = Time.time;
 
-        // Spawn slightly ahead to avoid self-collision at start
-        Vector3 spawnPos = firePoint.position + dir * Mathf.Max(0f, spawnForwardOffset);
+        Vector3 spawnPos =
+            firePoint.position
+            + Vector3.up * spawnHeightOffset
+            + dir * Mathf.Max(0f, spawnForwardOffset);
 
         GameObject go = Instantiate(kiBlastPrefab, spawnPos, Quaternion.LookRotation(dir, Vector3.up));
 
-        // Ensure a Projectile exists (auto-add if missing)
         var proj = go.GetComponent<Projectile>();
         if (!proj) proj = go.AddComponent<Projectile>();
-
-        // Pass owner so projectile ignores our colliders
         proj.Initialize(dir, this.gameObject);
     }
 
     // --- Melee helpers (LMB) ---
     void HandleMelee(Vector3 aimDir)
     {
-        // Left mouse click starts melee
         if (Input.GetMouseButtonDown(0))
             TryMelee(aimDir);
     }
@@ -336,7 +307,6 @@ public class PlayerController : MonoBehaviour
             if (meleeVFXLife > 0f) Destroy(v, meleeVFXLife);
         }
 
-        // Overlap + arc filter
         Vector3 origin = transform.position + Vector3.up * meleeHeightOffset;
         float radius = Mathf.Max(0.5f, meleeRange);
         var hits = Physics.OverlapSphere(origin + dir * (radius * 0.6f), radius, meleeHitMask, QueryTriggerInteraction.Ignore);
@@ -344,7 +314,6 @@ public class PlayerController : MonoBehaviour
         for (int i = 0; i < hits.Length; i++)
         {
             var h = hits[i];
-            // Exclude self
             if (h.transform == transform || h.GetComponentInParent<PlayerController>() == this) continue;
 
             Vector3 to = (h.transform.position - transform.position); to.y = 0f;
@@ -353,21 +322,24 @@ public class PlayerController : MonoBehaviour
             float ang = Vector3.Angle(dir, to);
             if (ang > meleeHalfAngle) continue;
 
-            // Damage enemy if present
             var eh = h.GetComponentInParent<EnemyHealth>();
             if (eh) eh.TakeDamage(meleeDamage);
 
-            // Knockback
             var rbTarget = h.attachedRigidbody ?? h.GetComponentInParent<Rigidbody>();
             if (rbTarget && meleeKnockback > 0f)
                 rbTarget.AddForce(to.normalized * meleeKnockback, ForceMode.VelocityChange);
         }
     }
 
-    // --- Public stun API (used by enemies) ---
+    // --- Public stun API (non-refreshing; respects immunity) ---
     public void Stun(float seconds)
     {
         if (seconds <= 0f) return;
+
+        // If already stunned, ignore further requests (prevents refresh/extend).
+        if (isStunned) return;
+
+        // Respect post-stun immunity window.
         if (Time.time < stunRecoverImmunityUntil) return;
 
         isStunned = true;

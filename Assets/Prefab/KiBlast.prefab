@@ -149,12 +149,9 @@ MonoBehaviour:
   m_Name: 
   m_EditorClassIdentifier: 
   speed: 28
-  lifetime: 10
-  useRaycastSweep: 1
-  damage: 15
-  damageEnemies: 1
-  damagePlayer: 0
-  hitMask:
-    serializedVersion: 2
-    m_Bits: 4294967295
-  destroyOnHit: 1
+  lifeTime: 5
+  damage: 30
+  explosionRadius: 0
+  impactEffect: {fileID: 0}
+  owner: {fileID: 0}
+  graceTimeWorldHit: 0.05

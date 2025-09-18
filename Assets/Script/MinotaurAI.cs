@@ -21,6 +21,9 @@ public class MinotaurAI : EnemyBase
     bool charging = false;
     float lastChargeTime = -999f;
 
+    // cache
+    Collider playerCol;
+
     void Update()
     {
         if (!player) return;
@@ -28,8 +31,16 @@ public class MinotaurAI : EnemyBase
         // If we’re not on a mesh yet, don’t touch the agent this frame.
         if (!TryEnsureOnNavMesh()) return;
 
-        float dist = Vector3.Distance(transform.position, player.position);
+        if (!playerCol) playerCol = player.GetComponentInParent<Collider>();
+
+        float dist = DistanceToPlayerSurface();
         FaceFlat(player.position);
+
+        if (AgentReady())
+        {
+            float desiredStop = Mathf.Max(0f, meleeRange - 0.1f);
+            if (agent.stoppingDistance != desiredStop) agent.stoppingDistance = desiredStop;
+        }
 
         if (charging) return;
 
@@ -62,6 +73,17 @@ public class MinotaurAI : EnemyBase
             if (anim && anim.runtimeAnimatorController)
                 anim.SetFloat("Speed", 0f);
         }
+    }
+
+    float DistanceToPlayerSurface()
+    {
+        Vector3 myPos = transform.position;
+        if (playerCol)
+        {
+            Vector3 closest = playerCol.ClosestPoint(myPos);
+            return Vector3.Distance(myPos, closest);
+        }
+        return Vector3.Distance(transform.position, player.position);
     }
 
     IEnumerator DoCharge()
@@ -105,10 +127,12 @@ public class MinotaurAI : EnemyBase
     public void AE_PunchHit() { TryMeleeDamage(punchDamage, meleeRange + 0.5f); }
     public void AE_HeadbuttHit() { TryMeleeDamage(headbuttDamage, meleeRange + 0.5f); }
 
-    void TryMeleeDamage(int dmg, float range)
+    void TryMeleeDamage(int dmg, float rangeWithForgiveness)
     {
         if (!player) return;
-        if (Vector3.Distance(transform.position, player.position) <= range)
+
+        float dist = DistanceToPlayerSurface();
+        if (dist <= rangeWithForgiveness)
             player.GetComponent<PlayerHealth>()?.TakeDamage(dmg);
     }
 
